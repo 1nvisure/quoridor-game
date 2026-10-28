@@ -395,8 +395,3 @@ export function pathDiff(s: GameState, player: Player): number {
 export function manhattan(a: Pos, b: Pos): number {
   return Math.abs(a.r - b.r) + Math.abs(a.c - b.c);
 }
-
-/** True if placing `wall` keeps both players connected (cheap pre-check). */
-export function wallKeepsPathsOpen(s: GameState, wall: Wall): boolean {
-  return isWallLegal(s, wall, s.turn);
-}

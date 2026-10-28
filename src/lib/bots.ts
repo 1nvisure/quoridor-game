@@ -19,9 +19,6 @@ import {
   SLOTS,
   GOAL_ROW,
   applyMove,
-  cloneState,
-  isEdgeBlocked,
-  isLegalPawnMove,
   isWallLegal,
   legalPawnMoves,
   legalWalls,
@@ -585,14 +582,6 @@ export function botMove(
   }
 }
 
-/** Only used by bots that need a safe pawn fallback. */
-export function safePawnMove(state: GameState, player: Player): Move | null {
-  const moves = legalPawnMoves(state, player);
-  if (moves.length === 0) return null;
-  const to = moves.find((m) => !isEdgeBlocked(state, state.pawns[player], m)) ?? moves[0];
-  return { type: 'pawn', to };
-}
-
 /** First legal move available — a hard guarantee that a turn can always be played. */
 export function firstLegalMove(state: GameState): Move | null {
   const pawn = legalPawnMoves(state, state.turn);
@@ -601,12 +590,3 @@ export function firstLegalMove(state: GameState): Move | null {
   if (walls.length > 0) return { type: 'wall', wall: walls[0] };
   return null;
 }
-
-export function legalCounts(state: GameState, player: Player) {
-  return {
-    pawns: legalPawnMoves(state, player).length,
-    walls: legalWalls(state, player).length,
-  };
-}
-
-export { cloneState, isLegalPawnMove };

@@ -27,7 +27,6 @@ import {
   type Player,
   type Pos,
   type Wall,
-  GOAL_ROW,
   legalPawnMoves,
   legalWalls,
   pathLength,

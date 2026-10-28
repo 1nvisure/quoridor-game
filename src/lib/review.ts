@@ -121,12 +121,15 @@ export interface PlyAnalysis {
   /** Advantage for player 0, measured in steps of shortest-path difference. */
   advantageBefore: number;
   advantageAfter: number;
-  /** Win probability for player 0 before/after the move (0-1). */
+  /**
+   * Win probability for the player who made the move — before the move assuming
+   * best play, and after the move as actually played (both 0-1).
+   */
   winProbBefore: number;
   winProbAfter: number;
-  /** Win probability for the player who moved, after their move (0-1). */
+  /** Alias of `winProbAfter`, named for readability at call sites. */
   moverWinProb: number;
-  /** Win probability for the player who moved with the best move (0-1). */
+  /** Win probability the mover would have kept by playing the best move. */
   moverWinProbBest: number;
   /** Drop in win probability, in percentage points. */
   loss: number;

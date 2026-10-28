@@ -40,7 +40,6 @@ import {
   legalPawnMoves,
   legalWalls,
   moveNotation,
-  samePos,
 } from '@/lib/engine';
 import { analyzePosition, CLASSIFICATIONS, classify, moveAccuracy, type GameAnalysis } from '@/lib/review';
 import { sameMove } from '@/lib/bots';
@@ -361,7 +360,25 @@ export default function ReviewDashboard({
                         </>
                       )}
                       <span className="ml-auto text-[11px] font-bold tabular-nums text-[#8d8981]">
-                        {Math.round(activePly.winProbAfter * 100)}% win
+                        Your win chance{' '}
+                        <span
+                          className="text-[#e9e6df]"
+                          style={{
+                            color:
+                              (activePly.player === humanPlayer
+                                ? activePly.winProbAfter
+                                : 1 - activePly.winProbAfter) >= 0.5
+                                ? '#9bd15f'
+                                : '#ff8e7f',
+                          }}
+                        >
+                          {Math.round(
+                            (activePly.player === humanPlayer
+                              ? activePly.winProbAfter
+                              : 1 - activePly.winProbAfter) * 100,
+                          )}
+                          %
+                        </span>
                       </span>
                     </div>
                   ) : (

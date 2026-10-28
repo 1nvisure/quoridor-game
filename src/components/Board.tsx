@@ -11,11 +11,7 @@ import {
   SIZE,
   SLOTS,
   GOAL_ROW,
-  cellName,
-  isEdgeBlocked,
-  samePos,
   shortestPath,
-  wallName,
 } from '@/lib/engine';
 
 /* Board geometry — one unit grid, 9 cells, 8 wall gaps. */
@@ -418,45 +414,3 @@ export default function Board({
     </div>
   );
 }
-
-/** Distance badges shown beside each player's name. */
-export function pathDistances(state: GameState): [number, number] {
-  return [shortestPath(state, 0).dist, shortestPath(state, 1).dist];
-}
-
-export function describeCell(p: Pos): string {
-  return cellName(p);
-}
-
-export function describeWall(w: Wall): string {
-  return wallName(w);
-}
-
-/** True when the wall would sever a path (used for rejected-move feedback). */
-export function wouldTrap(state: GameState, wall: Wall): boolean {
-  const grid = wall.o === 'h' ? state.h : state.v;
-  const i = wall.r * SIZE + wall.c;
-  if (grid[i]) return false;
-  grid[i] = true;
-  const trapped = shortestPath(state, 0).dist === Infinity || shortestPath(state, 1).dist === Infinity;
-  grid[i] = false;
-  return trapped;
-}
-
-/** Cells adjacent to `p` that are reachable (used for hover arrows). */
-export function reachableFrom(state: GameState, p: Pos): Pos[] {
-  const out: Pos[] = [];
-  for (const d of [
-    { r: -1, c: 0 },
-    { r: 1, c: 0 },
-    { r: 0, c: -1 },
-    { r: 0, c: 1 },
-  ]) {
-    const n = { r: p.r + d.r, c: p.c + d.c };
-    if (n.r < 0 || n.r >= SIZE || n.c < 0 || n.c >= SIZE) continue;
-    if (!isEdgeBlocked(state, p, n)) out.push(n);
-  }
-  return out;
-}
-
-export { samePos };

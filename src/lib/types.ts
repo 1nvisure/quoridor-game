@@ -15,12 +15,3 @@ export interface GameRecord {
   losses: number;
   bestAccuracy: number;
 }
-
-export interface MatchResult {
-  winner: Player | null;
-  /** Set when the human resigned. */
-  resigned?: boolean;
-  moves: number;
-  durationMs: number;
-  botName: string;
-}
