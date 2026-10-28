@@ -10,6 +10,7 @@ import {
   Lightbulb,
   RotateCcw,
   Sparkles,
+  Trophy,
   SplitSquareHorizontal,
   SplitSquareVertical,
   X,
@@ -68,8 +69,13 @@ export default function GameScreen({
   const [orientation, setOrientation] = useState<Orientation>('h');
   const [showPaths, setShowPaths] = useState(false);
   const [hint, setHint] = useState<Pos | Wall | null>(null);
+  // The result modal is dismissible — the user may want to study the final board.
+  const [resultOpen, setResultOpen] = useState(true);
 
   const gameOver = state.winner !== null;
+  useEffect(() => {
+    if (gameOver) setResultOpen(true);
+  }, [gameOver]);
   const myTurn = state.turn === humanPlayer && !gameOver && !thinking;
 
   const pawnMoves = useMemo<Pos[]>(
@@ -164,6 +170,14 @@ export default function GameScreen({
           <button onClick={onResign} disabled={gameOver} className="btn-secondary !px-3 !py-2 !text-[12px]">
             <Flag size={13} /> Resign
           </button>
+          {gameOver && !resultOpen && (
+            <button
+              onClick={() => setResultOpen(true)}
+              className="btn-primary !px-3 !py-2 !text-[12px]"
+            >
+              <Trophy size={13} /> Result
+            </button>
+          )}
           <button
             onClick={onRematch}
             className="btn-secondary hidden !px-3 !py-2 !text-[12px] sm:flex"
@@ -324,9 +338,17 @@ export default function GameScreen({
           </div>
 
           {gameOver && (
-            <button onClick={onReview} disabled={reviewing} className="btn-primary w-full">
+            <button
+              onClick={onReview}
+              disabled={reviewing || history.length === 0}
+              className="btn-primary w-full"
+            >
               <ChartNoAxesColumn size={16} />
-              {reviewing ? 'Analysing game…' : 'Game Review'}
+              {reviewing
+                ? 'Analysing game…'
+                : history.length === 0
+                  ? 'No moves to review'
+                  : 'Game Review'}
             </button>
           )}
 
@@ -337,7 +359,7 @@ export default function GameScreen({
         </aside>
       </div>
 
-      {gameOver && (
+      {gameOver && resultOpen && (
           <GameOverPanel
             state={state}
             humanPlayer={humanPlayer}
@@ -345,7 +367,9 @@ export default function GameScreen({
             onReview={onReview}
             onRematch={onRematch}
             onLeave={onLeave}
+            onClose={() => setResultOpen(false)}
             reviewing={reviewing}
+            canReview={history.length > 0}
           />
         )}
     </div>
@@ -450,7 +474,9 @@ function GameOverPanel({
   onReview,
   onRematch,
   onLeave,
+  onClose,
   reviewing,
+  canReview = true,
 }: {
   state: GameState;
   humanPlayer: Player;
@@ -458,7 +484,9 @@ function GameOverPanel({
   onReview: () => void;
   onRematch: () => void;
   onLeave: () => void;
+  onClose: () => void;
   reviewing?: boolean;
+  canReview?: boolean;
 }) {
   const win = state.winner === humanPlayer;
   const draw = state.winner === null;
@@ -468,6 +496,9 @@ function GameOverPanel({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-4 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <motion.div
         initial={{ scale: 0.94, y: 12, opacity: 0 }}
@@ -476,7 +507,7 @@ function GameOverPanel({
         className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-white/10 bg-app-750 p-6 text-center shadow-2xl"
       >
         <button
-          onClick={onLeave}
+          onClick={onClose}
           className="absolute right-3 top-3 rounded-lg p-1.5 text-[#8d8981] transition-colors hover:bg-white/10 hover:text-white"
           aria-label="Close"
         >
@@ -510,9 +541,13 @@ function GameOverPanel({
         </div>
 
         <div className="mt-5 space-y-2">
-          <button onClick={onReview} disabled={reviewing} className="btn-primary w-full">
+          <button
+            onClick={onReview}
+            disabled={reviewing || !canReview}
+            className="btn-primary w-full"
+          >
             <ChartNoAxesColumn size={16} />
-            {reviewing ? 'Analysing…' : 'Game Review'}
+            {reviewing ? 'Analysing…' : canReview ? 'Game Review' : 'No moves to review'}
           </button>
           <div className="grid grid-cols-2 gap-2">
             <button onClick={onRematch} className="btn-secondary">

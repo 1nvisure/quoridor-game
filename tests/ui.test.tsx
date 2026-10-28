@@ -112,3 +112,32 @@ test('playing as red: the bot opens, and walls can be placed', async () => {
 
   cleanup();
 });
+
+test('resigning before any move disables the review instead of failing silently', async () => {
+  render(<QuoridorApp />);
+
+  const cards = await screen.findAllByRole('button', { name: /play/i });
+  fireEvent.click(cards[0]);
+  await waitFor(() => assert.ok(screen.getByText('Moves')), { timeout: 4000 });
+
+  // Resign immediately (the bot may have opened if we were red; here green = us).
+  fireEvent.click(screen.getByRole('button', { name: /resign/i }));
+  await settle(400);
+
+  const noMoves = await screen.findAllByRole('button', { name: /no moves to review/i });
+  assert.equal(noMoves.length, 2, 'sidebar + modal both offer review');
+  for (const btn of noMoves) {
+    assert.equal((btn as HTMLButtonElement).disabled, true, 'review is disabled with no moves');
+  }
+
+  // The modal can be dismissed to inspect the board, then reopened.
+  fireEvent.click(screen.getByRole('button', { name: /close/i }));
+  await settle(200);
+  assert.equal(screen.queryByText('You lost'), null, 'modal dismissed');
+  const reopen = screen.getByRole('button', { name: /result/i });
+  fireEvent.click(reopen);
+  await settle(200);
+  assert.ok(screen.getByText('You lost'), 'modal reopened');
+
+  cleanup();
+});

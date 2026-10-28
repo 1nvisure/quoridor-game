@@ -18,7 +18,7 @@ npm run dev        # http://localhost:3000
 ```bash
 npm run build && npm start   # production
 npm test                     # engine / bot / review unit tests (26)
-npm run test:ui              # jsdom UI tests: full game → review loop (2)
+npm run test:ui              # jsdom UI tests: full game → review loop (3)
 npm run typecheck            # tsc --noEmit
 ```
 
@@ -218,10 +218,11 @@ Keyboard: `W` wall mode, `H` / `V` orientation, `Esc` cancel, `P` shortest paths
   games; the search respects its time budget; evaluation is antisymmetric.
 * **Review (8)** — sigmoid bounds, classification thresholds, accuracy monotonicity,
   ranked best moves, async/sync parity, a deliberate tempo waste being penalised.
-* **UI (2)** — jsdom + Testing Library: lobby → play → game over → review → step →
-  retry → back to lobby, plus the red-side/wall-placement flow.
+* **UI (3)** — jsdom + Testing Library: lobby → play → game over → review → step →
+  retry → back to lobby; the red-side/wall-placement flow; and resign-with-no-moves
+  disabling the review plus dismissing/reopening the result modal.
 
 ```bash
 npm test        # 26 unit tests
-npm run test:ui # 2 end-to-end UI tests
+npm run test:ui # 3 end-to-end UI tests
 ```
