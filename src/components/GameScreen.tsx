@@ -188,8 +188,8 @@ export default function GameScreen({
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_330px]">
-        {/* Board column */}
-        <div className="mx-auto w-full max-w-[600px]">
+        {/* Board column — capped by viewport height so a laptop never has to scroll. */}
+        <div className="mx-auto w-full max-w-[min(600px,calc(100dvh-17rem))]">
           <div className="mb-2">
             <PlayerCard
               player={botSeat}
