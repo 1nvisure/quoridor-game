@@ -1,11 +1,14 @@
 import './dom';
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 
 import QuoridorApp from '../src/components/QuoridorApp';
 
 const settle = (ms = 800) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
+
+// Always unmount, even when an assertion fails, so the next test starts clean.
+afterEach(() => cleanup());
 const legalCells = () => Array.from(document.querySelectorAll('rect.cursor-pointer'));
 const gameOver = () => !!document.body.textContent?.match(/You won!|You lost|Game over/);
 
@@ -13,9 +16,9 @@ test('lobby → game → review: the whole loop works', async () => {
   render(<QuoridorApp />);
 
   const cards = await screen.findAllByRole('button', { name: /play/i });
-  assert.equal(cards.length, 3, 'three bot cards in the lobby');
+  assert.equal(cards.length, 7, 'seven bot cards in the lobby');
 
-  fireEvent.click(cards[0]); // Pawnsy (beginner)
+  fireEvent.click(cards[0]); // Pip (tier 1, fastest games)
   await waitFor(() => assert.ok(screen.getByText('Moves')), { timeout: 4000 });
 
   // Play until the game ends (the harness always takes the topmost legal square).
@@ -138,6 +141,164 @@ test('resigning before any move disables the review instead of failing silently'
   fireEvent.click(reopen);
   await settle(200);
   assert.ok(screen.getByText('You lost'), 'modal reopened');
+
+  cleanup();
+});
+
+test('undo takes back the human move and the bot reply', async () => {
+  render(<QuoridorApp />);
+
+  const cards = await screen.findAllByRole('button', { name: /play/i });
+  assert.equal(cards.length, 7, 'seven bot cards in the lobby');
+  fireEvent.click(cards[1]); // Nibbles (tier 2, quick)
+  await waitFor(() => assert.ok(screen.getByText('Moves')), { timeout: 4000 });
+
+  // Play one full exchange: our move, then the bot's reply.
+  await waitFor(() => assert.ok(legalCells().length > 0), { timeout: 6000 });
+  fireEvent.click(legalCells()[0]);
+  await settle(900);
+
+  const rowsBefore = () => document.querySelectorAll('tbody tr').length;
+  const pliesBefore = rowsBefore();
+  assert.ok(pliesBefore >= 1, 'at least one move on the board');
+
+  const undo = screen.getByRole('button', { name: /undo/i }) as HTMLButtonElement;
+  assert.equal(undo.disabled, false, 'undo is available once we have moved');
+
+  fireEvent.click(undo);
+  await settle(400);
+
+  // Both half-moves are gone: the move list is empty and it is our turn again.
+  const cells = legalCells();
+  assert.ok(cells.length > 0, 'board is interactive again');
+  assert.match(document.body.textContent ?? '', /Your move/, 'turn returns to the human');
+
+  // The bot must not immediately replay — the board stays ours.
+  await settle(700);
+  assert.match(document.body.textContent ?? '', /Your move/, 'bot stays dormant after an undo');
+
+  // Undo is disabled when there is nothing left to take back.
+  assert.equal((screen.getByRole('button', { name: /undo/i }) as HTMLButtonElement).disabled, true);
+
+  cleanup();
+});
+
+test('review "play from here" branches the game and the bot answers', async () => {
+  render(<QuoridorApp />);
+
+  const cards = await screen.findAllByRole('button', { name: /play/i });
+  fireEvent.click(cards[1]); // Nibbles
+  await waitFor(() => assert.ok(screen.getByText('Moves')), { timeout: 4000 });
+
+  // Play a few exchanges so there is a real line to branch from.
+  for (let i = 0; i < 3 && !gameOver(); i++) {
+    await waitFor(() => assert.ok(legalCells().length > 0), { timeout: 6000 });
+    fireEvent.click(legalCells()[0]);
+    await settle(850);
+  }
+
+  if (!gameOver()) {
+    fireEvent.click(screen.getByRole('button', { name: /resign/i }));
+    await settle(500);
+  }
+
+  const reviewButtons = await screen.findAllByRole('button', { name: /game review/i });
+  fireEvent.click(reviewButtons[reviewButtons.length - 1]);
+  await waitFor(() => assert.ok(screen.getByText('Key moments')), { timeout: 30000 });
+
+  // Step back to the opening — an even ply is the human's turn.
+  for (let i = 0; i < 6; i++) {
+    fireEvent.click(screen.getByRole('button', { name: /^previous$/i }));
+  }
+  await settle(200);
+
+  const banner = screen.queryByText(/play a highlighted square to branch/i);
+  assert.ok(banner, 'the branch affordance is offered');
+
+  const branchTargets = legalCells();
+  assert.ok(branchTargets.length > 0, 'branch targets are highlighted');
+  fireEvent.click(branchTargets[0]);
+  await settle(1400);
+
+  // We are back in a live match, with the bot having answered our new move.
+  assert.ok(screen.getByText('Moves'), 'back on the game screen');
+  assert.ok(document.body.textContent?.includes('Move'), 'match is live');
+  await waitFor(() => assert.ok(legalCells().length > 0, 'human to move again'), { timeout: 8000 });
+
+  cleanup();
+});
+
+test('the bot chats during a live game', async () => {
+  render(<QuoridorApp />);
+
+  const cards = await screen.findAllByRole('button', { name: /play/i });
+  fireEvent.click(cards[0]); // Pip
+  await waitFor(() => assert.ok(screen.getByText('Moves')), { timeout: 4000 });
+
+  // The greeting fires once both sides have made their first move.
+  await waitFor(() => assert.ok(legalCells().length > 0), { timeout: 6000 });
+  fireEvent.click(legalCells()[0]);
+  await settle(1200);
+  await waitFor(() => assert.ok(legalCells().length > 0), { timeout: 6000 });
+  fireEvent.click(legalCells()[0]);
+  await settle(1400);
+
+  const chatPanel = screen.getByLabelText(/chat with pip/i);
+  const lines = chatPanel.querySelectorAll('p');
+  assert.ok(lines.length >= 1, `expected a bot line, found ${lines.length}`);
+
+  // The speech bubble floats over the board too.
+  assert.ok(document.body.textContent?.length > 0);
+
+  // The player can talk back.
+  const input = screen.getByLabelText(/chat message/i) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'good luck!' } });
+  fireEvent.submit(input.closest('form')!);
+  await settle(900);
+  assert.match(document.body.textContent ?? '', /good luck!/, 'our message shows in chat');
+
+  cleanup();
+});
+
+test('a wall can be placed to branch the game, not just a pawn step', async () => {
+  render(<QuoridorApp />);
+
+  const cards = await screen.findAllByRole('button', { name: /play/i });
+  fireEvent.click(cards[1]);
+  await waitFor(() => assert.ok(screen.getByText('Moves')), { timeout: 4000 });
+
+  await waitFor(() => assert.ok(legalCells().length > 0), { timeout: 6000 });
+  fireEvent.click(legalCells()[0]);
+  await settle(900);
+  if (!gameOver()) {
+    fireEvent.click(screen.getByRole('button', { name: /resign/i }));
+    await settle(500);
+  }
+
+  const reviewButtons = await screen.findAllByRole('button', { name: /game review/i });
+  fireEvent.click(reviewButtons[reviewButtons.length - 1]);
+  await waitFor(() => assert.ok(screen.getByText('Key moments')), { timeout: 30000 });
+
+  // Back to the start, where it is green's (our) turn.
+  fireEvent.click(screen.getByRole('button', { name: /^start$/i }));
+  await settle(200);
+  assert.ok(screen.queryByText(/play a highlighted square to branch/i), 'branch banner at the start');
+
+  // Wall mode inside the review exposes wall slots, and clicking one branches.
+  fireEvent.click(screen.getByRole('button', { name: /^walls$/i }));
+  await settle(200);
+  const ghosts = legalCells();
+  assert.ok(ghosts.length > 30, `expected wall slots in review, got ${ghosts.length}`);
+
+  fireEvent.click(ghosts[Math.floor(ghosts.length / 2)]);
+  await settle(1500);
+
+  // Live match again, with the wall on the board.
+  assert.ok(screen.getByText('Moves'), 'back on the game screen');
+  assert.ok(
+    document.querySelectorAll('rect[fill^="url(#wallWood"]').length >= 1,
+    'the branched wall is on the board',
+  );
 
   cleanup();
 });

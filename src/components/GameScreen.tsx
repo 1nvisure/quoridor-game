@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Sparkles,
   Trophy,
+  Undo2,
   SplitSquareHorizontal,
   SplitSquareVertical,
   X,
@@ -20,6 +21,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Board from './Board';
 import PlayerCard from './PlayerCard';
 import MoveList from './MoveList';
+import { BotChat, SpeechBubble } from './BotChat';
+import type { ChatMessage } from '@/lib/chat';
 import type { BotProfile } from '@/lib/bots';
 import {
   type GameState,
@@ -44,11 +47,18 @@ export interface GameScreenProps {
   thinking: boolean;
   onMove: (move: Move) => void;
   onResign: () => void;
+  onUndo: () => void;
+  canUndo: boolean;
   onLeave: () => void;
   onReview: () => void;
   onRematch: () => void;
   reviewing?: boolean;
   lastMove: { from: Pos | null; to: Pos | null; wall: Wall | null } | null;
+  chat: ChatMessage[];
+  chatTyping: boolean;
+  bubble: ChatMessage | null;
+  onDismissBubble: () => void;
+  onSendTaunt: (text: string) => void;
 }
 
 export default function GameScreen({
@@ -59,11 +69,18 @@ export default function GameScreen({
   thinking,
   onMove,
   onResign,
+  onUndo,
+  canUndo,
   onLeave,
   onReview,
   onRematch,
   reviewing,
   lastMove,
+  chat,
+  chatTyping,
+  bubble,
+  onDismissBubble,
+  onSendTaunt,
 }: GameScreenProps) {
   const [wallMode, setWallMode] = useState(false);
   const [orientation, setOrientation] = useState<Orientation>('h');
@@ -127,11 +144,13 @@ export default function GameScreen({
         setWallMode(false);
       } else if (k === 'p') {
         setShowPaths((v) => !v);
+      } else if (k === 'u' && canUndo) {
+        onUndo();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [canUndo, onUndo]);
 
   const botSeat = (1 - humanPlayer) as Player;
   const lastMover = history[history.length - 1]?.player;
@@ -167,6 +186,14 @@ export default function GameScreen({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={onUndo}
+            disabled={!canUndo}
+            title="Take back your last move and the reply (U)"
+            className="btn-secondary !px-3 !py-2 !text-[12px]"
+          >
+            <Undo2 size={13} /> Undo
+          </button>
           <button onClick={onResign} disabled={gameOver} className="btn-secondary !px-3 !py-2 !text-[12px]">
             <Flag size={13} /> Resign
           </button>
@@ -226,6 +253,7 @@ export default function GameScreen({
                     : null
               }
             />
+            {bubble && <SpeechBubble bot={bot} message={bubble} onDismiss={onDismissBubble} />}
             {thinking && !gameOver && (
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -336,6 +364,13 @@ export default function GameScreen({
               </button>
             </div>
           </div>
+
+          <BotChat
+            bot={bot}
+            messages={chat}
+            typing={chatTyping}
+            onSendTaunt={onSendTaunt}
+          />
 
           {gameOver && (
             <button

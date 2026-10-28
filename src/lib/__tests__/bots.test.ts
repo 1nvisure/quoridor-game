@@ -47,27 +47,32 @@ function playGame(bot0: BotId, bot1: BotId, seed: number, maxPlies = 250) {
   return { state: s, plies };
 }
 
-test('all three bots only ever play legal, non-trapping moves', () => {
-  for (const bot of ['beginner', 'intermediate', 'advanced'] as BotId[]) {
-    for (let seed = 1; seed <= 4; seed++) {
+test('all seven bots only ever play legal, non-trapping moves', () => {
+  for (const bot of ['pip', 'nibbles', 'watcher', 'rookford', 'sable', 'vex', 'oracle'] as BotId[]) {
+    for (let seed = 1; seed <= 3; seed++) {
+      // Legality and the anti-trap invariant are asserted inside playGame for
+      // every single half-move. Two *random* walkers (tier 1) can wander for a
+      // long time by design, so only the tiers that actually plan must finish.
       const { state } = playGame(bot, bot, seed * 9767);
-      assert.notEqual(state.winner, null, `${bot} seed ${seed} failed to finish`);
+      if (bot !== 'pip') {
+        assert.notEqual(state.winner, null, `${bot} seed ${seed} failed to finish`);
+      }
     }
   }
 });
 
-test('beginner plays fast and sometimes places walls', () => {
+test('the easiest bot plays fast and sometimes places walls', () => {
   const rng = rngFactory(11);
   let s = createInitialState();
   let walls = 0;
   for (let i = 0; i < 40 && s.winner === null; i++) {
     const t = Date.now();
-    const { move } = botMove(s, 'beginner', rng);
-    assert.ok(Date.now() - t < 50, 'beginner must be instant');
+    const { move } = botMove(s, 'nibbles', rng);
+    assert.ok(Date.now() - t < 50, 'the easy tiers must be instant');
     if (move.type === 'wall') walls++;
     s = applyMove(s, move);
   }
-  assert.ok(walls > 0, 'beginner should place random walls occasionally');
+  assert.ok(walls > 0, 'the easy tiers should place random walls occasionally');
 });
 
 test('advanced search respects its time budget', () => {
@@ -98,7 +103,7 @@ test('bots never run out of walls out of order', () => {
   s.left = [0, 0];
   const rng = rngFactory(3);
   for (let i = 0; i < 20 && s.winner === null; i++) {
-    const { move } = botMove(s, 'intermediate', rng);
+    const { move } = botMove(s, 'rookford', rng);
     assert.equal(move.type, 'pawn', 'with no walls left the bot must walk');
     s = applyMove(s, move);
   }
@@ -106,7 +111,7 @@ test('bots never run out of walls out of order', () => {
 
 test('a bot completes a game against itself in reasonable time', () => {
   const t = Date.now();
-  const { state } = playGame('advanced', 'intermediate', 4242);
+  const { state } = playGame('vex', 'rookford', 4242);
   assert.notEqual(state.winner, null);
   assert.ok(Date.now() - t < 60_000, 'game should finish in under a minute');
 });

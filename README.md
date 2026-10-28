@@ -1,8 +1,10 @@
 # Quoridor — Play Bots & Review Your Game
 
-A complete Quoridor web app in the visual language of Chess.com's dark theme: three
-bot opponents, BFS-validated wall placement, and a full post-game review engine with
-accuracy scores, an evaluation graph, move classifications and key moments.
+A complete Quoridor web app in the visual language of Chess.com's dark theme: seven
+bot opponents with their own trash talk, BFS-validated wall placement, an undo button,
+and a full post-game review engine with accuracy scores, an evaluation graph, move
+classifications, key moments — and the ability to branch the game and keep playing
+from any position.
 
 ![stack](https://img.shields.io/badge/Next.js-15-black) ![stack](https://img.shields.io/badge/TypeScript-5-blue) ![stack](https://img.shields.io/badge/Tailwind-3-38bdf8)
 
@@ -17,10 +19,21 @@ npm run dev        # http://localhost:3000
 
 ```bash
 npm run build && npm start   # production
-npm test                     # engine / bot / review unit tests (26)
-npm run test:ui              # jsdom UI tests: full game → review loop (3)
+npm test                     # engine / roster / review unit tests (40)
+npm run test:ui              # jsdom UI tests: play, undo, chat, review, branch (7)
 npm run typecheck            # tsc --noEmit
 ```
+
+## What's in the box
+
+| Feature | Where |
+| --- | --- |
+| Seven-tier bot ladder, 400 → 2200 Elo | `src/lib/bots.ts`, `src/components/Lobby.tsx` |
+| Contextual bot trash talk | `src/lib/chat.ts`, `src/components/BotChat.tsx` |
+| Undo (takes back your move *and* the reply) | `src/components/QuoridorApp.tsx` |
+| "Play from here" — branch a finished game | `src/components/review/ReviewDashboard.tsx` |
+| BFS anti-trap wall validation | `src/lib/engine.ts` |
+| Accuracy, eval graph, key moments, retry | `src/lib/review.ts` |
 
 ---
 
@@ -76,7 +89,8 @@ src/
 │   └── page.tsx              # mounts <QuoridorApp />
 ├── lib/
 │   ├── engine.ts             # rules, BFS pathfinding, wall validation, notation
-│   ├── bots.ts               # evaluation, alpha-beta search, three personalities
+│   ├── bots.ts               # evaluation, alpha-beta search, seven personalities
+│   ├── chat.ts               # contextual trash-talk packs + event triggers
 │   ├── review.ts             # win probability, classification, accuracy, key moments
 │   ├── types.ts              # screen / history / record types
 │   └── __tests__/            # engine, bots and review unit tests
@@ -85,6 +99,7 @@ src/
 │   ├── Lobby.tsx             # "Play Bots" lobby: cards, Elo, banter, records
 │   ├── GameScreen.tsx        # play surface, wall controls, game-over modal
 │   ├── Board.tsx             # SVG board, walls, pawns, ghosts, path overlay
+│   ├── BotChat.tsx           # chat panel, speech bubbles, typing indicator
 │   ├── PlayerCard.tsx        # avatar, wall pips, thinking indicator
 │   ├── MoveList.tsx          # two-column move table
 │   ├── review/
@@ -115,13 +130,17 @@ path for both players and the review can reason about cut edges.
 
 ---
 
-## Bots
+## Bots — seven tiers
 
-| Bot | Elo | How it plays |
-| --- | --- | --- |
-| **Pawnsy** 🌱 | ~600 | Greedy BFS walker; random walls ~22% of turns; occasional sideways step |
-| **Rookford** ♞ | ~1200 | Path-differential hunter: only spends a wall when it costs you ≥ 2 steps and costs itself ≤ 1 |
-| **Grandmaster Vex** ♛ | ~1800 | Negamax + alpha-beta, iterative deepening to depth 2–3, wall-inventory and centrality terms |
+| Tier | Bot | Elo | Strategy | Personality |
+| --- | --- | --- | --- | --- |
+| 1 | 🌱 **Pip** | 400 | random legal moves | eager, apologetic, no plan |
+| 2 | 🐿️ **Nibbles** | 700 | greedy BFS + random walls | hyperactive, snack-driven |
+| 3 | 🦉 **The Watcher** | 1000 | path differential, min gain 1 | calm, cryptic, patient |
+| 4 | ♞ **Rookford** | 1300 | path differential, min gain 2 | precise, arithmetic-obsessed |
+| 5 | 🐺 **Sable** | 1600 | negamax + αβ, **depth 2** | predatory, laconic |
+| 6 | ♛ **Grandmaster Vex** | 1900 | negamax + αβ, **depth 3** | theatrical, condescending |
+| 7 | 🔮 **The Oracle** | 2200 | negamax + αβ, **depth 4** | omniscient, fatalistic |
 
 Shared evaluation (always from the side-to-move, so negamax signs stay consistent):
 
@@ -132,22 +151,82 @@ score = (oppPathLength − myPathLength) · 100
       + tempo
 ```
 
-The search uses move ordering from a cheap cut-edge heuristic: candidate walls are
-pre-scored by whether they cross a shortest-path edge, so the expensive BFS is only
-spent on the promising handful. Measured head-to-head (colour-swapped, 20 games each):
+### Making depth actually pay
+
+The interesting engineering problem was that **depth alone did not create strength**.
+The first naive ladder produced a depth-3 bot that *lost* to depth-2 (0–12), for two
+independent reasons:
+
+1. **Odd/even parity.** A leaf evaluated right after our own move assumes the opponent
+   passes, so odd depths were systematically optimistic. Fixed with a one-reply
+   *quiescence* step at every leaf: the side to move always gets its answer scored.
+2. **A saturating evaluation.** Beyond two plies the path-difference heuristic stops
+   adding information, so extra search just found moves that gamed the eval.
+
+The fix was to make the deeper tiers verify *more*: a wider root and a wider leaf
+quiescence (4 → 8 → 12 candidates), plus a `searchNoise` term that models a weaker
+player's imprecision. Colour-swapped head-to-head, 10 games per adjacent pair:
 
 ```
-advanced vs intermediate   18 – 2
-advanced vs beginner       19 – 1
-intermediate vs beginner   19 – 1
+pip      vs nibbles    0 – 10
+nibbles  vs watcher    3 – 7
+watcher  vs rookford   1 – 9
+rookford vs sable      2 – 8
+sable    vs vex        3 – 7
+vex      vs oracle     0 – 10
 ```
 
-Typical think time is 30–300 ms, always bounded by a node budget and a wall-clock
-deadline so the UI never hangs.
+Monotonic the whole way up. Think time stays inside the clock: tier 5 ~20 ms, tier 6
+~200 ms, tier 7 ~500 ms typical (1.7 s budget cap).
+
+Two performance fixes keep depth 4 affordable (3.8 s → 0.79 s on a mid-game check):
+
+* **Zobrist transposition table** per search — unrelated wall placements transpose
+  constantly, so memoising positions prunes most of the re-search.
+* **Deferred anti-trap BFS.** `generateCandidates` used to run two full BFS passes for
+  all 128 wall slots at every node. It now does the cheap structural check for every
+  slot and the expensive anti-trap validation only for the walls it actually returns.
 
 ---
 
-## Review engine
+## Bot trash talk
+
+`src/lib/chat.ts` gives every opponent a `ChatPack` keyed by context:
+`greeting`, `playerBlunder`, `playerGoodMove`, `botAdvantage`, `botBehind`,
+`wallSpam`, `idle`, `botWin`, `botLoss`, `resignation`, `undo`.
+
+The trigger is **the position, not a timer**: after each half-move the app compares the
+human's win probability before and after (cheap two-BFS evaluation) and asks
+`deriveChatEvent` what to say. A 11-point drop is a blunder, a bot move that takes the
+bot above 64% win probability is `botAdvantage`, and so on. Every event carries a stable
+de-duplication key so React effect re-runs never repeat a line.
+
+Lines appear as speech bubbles in the sidebar chat (with a typing indicator), the newest
+one also floats over the board for a few seconds, and the player can type back — the bot
+always gets the last word.
+
+---
+
+## Undo
+
+The Undo button (or `U`) rewinds to just before the human's last move, discarding that
+move **and** the bot's reply, and restoring pawns, wall inventories and board state
+exactly. Because the restored turn belongs to the human, the bot effect stays dormant —
+the engine cannot instantly replay the move you just took back. It is disabled while the
+bot is thinking, when the game is over, and when there is nothing of yours to take back.
+
+---
+
+## Play from here
+
+Step back to any position in the review and the board becomes live again — highlighted
+squares are real moves. Playing one replaces that half-move, truncates everything after
+it, drops the stale analysis, and hands control back to **Active Match**, where the bot
+answers immediately. The result is a new line that can itself be reviewed.
+
+---
+
+## Review engine## Review engine
 
 After a game ends, "Game Review" analyses **every half-move**:
 
@@ -206,7 +285,7 @@ active-player bar, and a pulsing ring on the side to move. Screens swap instantl
 exit-gated transitions) so a throttled background tab can't strand the user.
 
 Keyboard: `W` wall mode, `H` / `V` orientation, `Esc` cancel, `P` shortest paths,
-`←` / `→` / `Home` / `End` to step through a review.
+`U` undo, `←` / `→` / `Home` / `End` to step through a review.
 
 ---
 
@@ -216,13 +295,19 @@ Keyboard: `W` wall mode, `H` / `V` orientation, `Esc` cancel, `P` shortest paths
   anti-trap rejection, win detection, BFS detours.
 * **Bots (8)** — every bot only plays legal, non-trapping moves across many random
   games; the search respects its time budget; evaluation is antisymmetric.
+* **Roster (14)** — seven unique tiers with an ascending Elo curve, strategy/depth
+  scaling, a complete chat pack per bot, depth-completion and time budgets, a
+  transposition-table determinism check, and Rookford's "gain ≥ 2, cost ≤ 1" wall
+  contract verified on every wall it places.
 * **Review (8)** — sigmoid bounds, classification thresholds, accuracy monotonicity,
   ranked best moves, async/sync parity, a deliberate tempo waste being penalised.
-* **UI (3)** — jsdom + Testing Library: lobby → play → game over → review → step →
-  retry → back to lobby; the red-side/wall-placement flow; and resign-with-no-moves
-  disabling the review plus dismissing/reopening the result modal.
+* **UI (7)** — jsdom + Testing Library: lobby → play → game over → review → step →
+  retry → back to lobby; the red-side/wall-placement flow; resign-with-no-moves
+  disabling the review; **undo** removing both half-moves and leaving the bot dormant;
+  the bot **chatting** during a live game; **"play from here"** branching a finished
+  game back into a live match; and branching with a **wall** rather than a pawn step.
 
 ```bash
-npm test        # 26 unit tests
-npm run test:ui # 3 end-to-end UI tests
+npm test        # 40 unit tests
+npm run test:ui # 7 end-to-end UI tests
 ```

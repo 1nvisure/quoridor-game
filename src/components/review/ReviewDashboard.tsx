@@ -16,6 +16,7 @@ import {
   Sparkles,
   SplitSquareHorizontal,
   SplitSquareVertical,
+  Play,
   TriangleAlert,
   Trophy,
   Wand2,
@@ -51,6 +52,8 @@ interface ReviewDashboardProps {
   bot: BotProfile;
   onLeave: () => void;
   onRematch: () => void;
+  /** Replace half-move `plyIndex` with `move` and resume live play. */
+  onBranch: (plyIndex: number, move: Move) => void;
 }
 
 interface RetryResult {
@@ -68,6 +71,7 @@ export default function ReviewDashboard({
   bot,
   onLeave,
   onRematch,
+  onBranch,
 }: ReviewDashboardProps) {
   const total = analysis.plies.length;
   const [current, setCurrent] = useState(total);
@@ -95,6 +99,7 @@ export default function ReviewDashboard({
     (n: number) => {
       setRetry(null);
       setShowBest(false);
+      setWallMode(false);
       setCurrent(Math.max(0, Math.min(total, n)));
     },
     [total],
@@ -148,6 +153,39 @@ export default function ReviewDashboard({
         classification: classify(loss, sameMove(move, best)),
       },
     });
+  };
+
+  /**
+   * "Play from here": any position where it is the human's turn is a live branch
+   * point. Playing a move there truncates the game and hands control back to the
+   * match, where the bot answers immediately.
+   */
+  const canBranchHere = !retry && boardState.turn === humanPlayer && boardState.winner === null;
+
+  /** Nearest position at or before the cursor where the human is to move. */
+  const nearestHumanPly = useMemo(() => {
+    for (let i = Math.min(clamped, analysis.plies.length - 1); i >= 0; i--) {
+      if (analysis.plies[i].stateBefore.turn === humanPlayer) return i;
+    }
+    return -1;
+  }, [analysis.plies, clamped, humanPlayer]);
+
+  const branchPawns = useMemo<Pos[]>(
+    () => (canBranchHere ? legalPawnMoves(boardState, humanPlayer) : []),
+    [canBranchHere, boardState, humanPlayer],
+  );
+
+  const branchWalls = useMemo<Wall[]>(
+    () =>
+      canBranchHere && wallMode
+        ? legalWalls(boardState, humanPlayer).filter((w) => w.o === orientation)
+        : [],
+    [canBranchHere, wallMode, boardState, humanPlayer, orientation],
+  );
+
+  const playFromHere = (move: Move) => {
+    // The half-move at `clamped` is the one being replaced (0-based index).
+    onBranch(clamped, move);
   };
 
   const retryLegalPawns = useMemo<Pos[]>(() => {
@@ -241,17 +279,39 @@ export default function ReviewDashboard({
           <div className="relative rounded-xl border border-white/[0.07] bg-app-850 p-1.5 shadow-card">
             <Board
               state={boardState}
-              pawnMoves={retryLegalPawns}
-              wallTargets={retryLegalWalls}
+              pawnMoves={retry ? retryLegalPawns : branchPawns}
+              wallTargets={retry ? retryLegalWalls : branchWalls}
               wallMode={wallMode}
               orientation={orientation}
               lastMove={lastMove}
-              onPawnMove={retry ? (pos) => playRetryMove({ type: 'pawn', to: pos }) : undefined}
-              onWallPlace={retry ? (w) => playRetryMove({ type: 'wall', wall: w }) : undefined}
+              onPawnMove={
+                retry
+                  ? (pos) => playRetryMove({ type: 'pawn', to: pos })
+                  : canBranchHere
+                    ? (pos) => playFromHere({ type: 'pawn', to: pos })
+                    : undefined
+              }
+              onWallPlace={
+                retry
+                  ? (w) => playRetryMove({ type: 'wall', wall: w })
+                  : canBranchHere
+                    ? (w) => playFromHere({ type: 'wall', wall: w })
+                    : undefined
+              }
               bestMove={bestMoveHint}
-              interactive={!!retry}
+              interactive={!!retry || canBranchHere}
               activePlayer={activePly?.player}
             />
+
+            {/* branch banner */}
+            {canBranchHere && (
+              <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 mx-auto flex max-w-[92%] items-center gap-2 rounded-lg border border-brand/40 bg-app-900/92 px-2.5 py-1.5 backdrop-blur">
+                <Play size={12} className="shrink-0 text-brand" />
+                <p className="text-[10.5px] font-semibold leading-tight text-[#d8d4cb]">
+                  Your move — play a highlighted square to branch the game from here.
+                </p>
+              </div>
+            )}
 
             {/* classification chip over the board */}
             {activePly && !retry && (
@@ -337,6 +397,62 @@ export default function ReviewDashboard({
                   >
                     <RotateCcw size={13} /> Retry
                   </button>
+
+                  <button
+                    onClick={() => {
+                      // Jump to the nearest position where it is our turn; the
+                      // board is live there and a highlighted square branches.
+                      setWallMode(false);
+                      if (!canBranchHere && nearestHumanPly >= 0) go(nearestHumanPly);
+                    }}
+                    disabled={boardState.winner !== null || nearestHumanPly < 0}
+                    title="Branch the game from this position and keep playing"
+                    className={`btn flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold disabled:opacity-40 ${
+                      canBranchHere
+                        ? 'bg-brand text-[#12210a] hover:bg-brand-light'
+                        : 'bg-brand/15 text-brand-light hover:bg-brand/25'
+                    }`}
+                  >
+                    <Play size={13} /> Play from here
+                  </button>
+
+                  {canBranchHere && (
+                    <>
+                      <button
+                        onClick={() => setWallMode((v) => !v)}
+                        title="Place a wall instead of moving"
+                        className={`btn flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold ${
+                          wallMode
+                            ? 'bg-brand/20 text-brand-light'
+                            : 'bg-app-700 text-[#8d8981] hover:text-white'
+                        }`}
+                      >
+                        <SplitSquareHorizontal size={12} /> Walls
+                      </button>
+                      {wallMode && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setOrientation('h')}
+                            aria-label="Horizontal walls"
+                            className={`btn rounded px-1.5 py-1 text-[10px] font-bold ${
+                              orientation === 'h' ? 'bg-app-600 text-white' : 'bg-app-700 text-[#8d8981]'
+                            }`}
+                          >
+                            H
+                          </button>
+                          <button
+                            onClick={() => setOrientation('v')}
+                            aria-label="Vertical walls"
+                            className={`btn rounded px-1.5 py-1 text-[10px] font-bold ${
+                              orientation === 'v' ? 'bg-app-600 text-white' : 'bg-app-700 text-[#8d8981]'
+                            }`}
+                          >
+                            V
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   <span className="ml-auto pr-1 text-[11px] font-bold tabular-nums text-[#6f6b64]">
                     {clamped}/{total}

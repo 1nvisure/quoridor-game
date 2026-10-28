@@ -28,11 +28,13 @@ interface LobbyProps {
   totalGames: number;
 }
 
-const difficultyMeta: Record<BotId, { label: string; icon: typeof Shield; tone: string }> = {
-  beginner: { label: 'Easy', icon: Shield, tone: '#81b64c' },
-  intermediate: { label: 'Medium', icon: Target, tone: '#f7c631' },
-  advanced: { label: 'Hard', icon: Flame, tone: '#fa412d' },
-};
+/** Difficulty band per tier: 1-2 easy, 3-4 medium, 5-6 hard, 7 expert. */
+function difficultyFor(tier: number): { label: string; icon: typeof Shield; tone: string } {
+  if (tier <= 2) return { label: 'Easy', icon: Shield, tone: '#81b64c' };
+  if (tier <= 4) return { label: 'Medium', icon: Target, tone: '#f7c631' };
+  if (tier <= 6) return { label: 'Hard', icon: Flame, tone: '#fa412d' };
+  return { label: 'Expert', icon: Crown, tone: '#a855f7' };
+}
 
 export default function Lobby({ onStart, records, humanPlayer, onSelectSide, totalGames }: LobbyProps) {
   return (
@@ -71,7 +73,7 @@ export default function Lobby({ onStart, records, humanPlayer, onSelectSide, tot
         </motion.header>
 
         <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-3">
             {BOTS.map((bot, i) => (
               <BotCard
                 key={bot.id}
@@ -83,7 +85,7 @@ export default function Lobby({ onStart, records, humanPlayer, onSelectSide, tot
             ))}
           </div>
 
-          <aside className="space-y-4">
+          <aside className="space-y-4 xl:col-start-3 xl:row-span-1">
             <div className="panel p-4">
               <div className="mb-3 flex items-center gap-2">
                 <TrendingUp size={15} className="text-brand" />
@@ -202,7 +204,7 @@ function BotCard({
   record?: GameRecord;
   onPlay: () => void;
 }) {
-  const meta = difficultyMeta[bot.id];
+  const meta = difficultyFor(bot.tier);
   const Icon = meta.icon;
   const played = (record?.wins ?? 0) + (record?.losses ?? 0);
 
@@ -230,6 +232,21 @@ function BotCard({
             <span className="tabular-nums">{bot.elo}</span>
             <span className="text-[#4b4a46]">•</span>
             <span className="uppercase tracking-wide">{meta.label}</span>
+          </div>
+          <div className="mt-1 flex items-center gap-1">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <span
+                key={i}
+                className="h-1 w-3 rounded-full transition-colors"
+                style={{
+                  background: i < bot.tier ? bot.accent : 'rgba(255,255,255,.1)',
+                  opacity: i < bot.tier ? 1 : 0.5,
+                }}
+              />
+            ))}
+            <span className="ml-1 text-[9px] font-bold uppercase tracking-wider text-[#6f6b64]">
+              Lv {bot.tier}
+            </span>
           </div>
         </div>
         <div
