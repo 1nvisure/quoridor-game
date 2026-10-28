@@ -1,9 +1,13 @@
 /**
- * Bot opponents for Quoridor.
+ * Bot opponents for Quoridor — a seven-tier ladder from 400 to 2200 Elo.
  *
- *  - Beginner  (~600)  greedy BFS walker with random walls.
- *  - Intermediate (~1200) path-differential wall hunter.
- *  - Advanced  (~1800) negamax + alpha-beta with iterative deepening.
+ *   1 Pip        (400)   random legal moves
+ *   2 Nibbles    (700)   greedy BFS + random walls
+ *   3 Watcher   (1000)   path differential, min gain 1
+ *   4 Rookford  (1300)   path differential, min gain 2
+ *   5 Sable     (1600)   negamax + alpha-beta, depth 2
+ *   6 Vex       (1900)   negamax + alpha-beta, depth 3
+ *   7 Oracle    (2200)   negamax + alpha-beta, depth 4
  *
  * All bots only ever return moves that the engine considers legal, which means
  * the anti-trap BFS validation applies to every single wall they place.
@@ -20,6 +24,7 @@ import {
   GOAL_ROW,
   applyMove,
   isWallLegal,
+  isWallStructurallyLegal,
   legalPawnMoves,
   legalWalls,
   manhattan,
@@ -29,10 +34,20 @@ import {
   shortestPath,
 } from './engine';
 
-export type BotId = 'beginner' | 'intermediate' | 'advanced';
+export type BotId = 'pip' | 'nibbles' | 'watcher' | 'rookford' | 'sable' | 'vex' | 'oracle';
+
+/**
+ * How an opponent picks its move. The tier ladder maps onto these:
+ *   1-2   random / greedy BFS
+ *   3-4   shortest-path differential
+ *   5-7   negamax with alpha-beta pruning (depth 2, 3, 4)
+ */
+export type BotStrategy = 'random' | 'greedy' | 'pathdiff' | 'search';
 
 export interface BotProfile {
   id: BotId;
+  /** 1 (easiest) … 7 (hardest). */
+  tier: number;
   name: string;
   elo: number;
   tagline: string;
@@ -44,27 +59,79 @@ export interface BotProfile {
   emoji: string;
   description: string;
   thinkMs: [number, number];
+  strategy: BotStrategy;
+  /** Search depth for `search` bots. */
+  depth?: number;
+  /**
+   * Centi-step jitter applied to root scores. Higher = less precise, which is
+   * how the top tiers are separated: same algorithm, different discipline.
+   */
+  searchNoise?: number;
+  /** Minimum opponent-path gain worth spending a wall on (`pathdiff` bots). */
+  minGain?: number;
+  /** Probability of actually committing to the best wall found (`pathdiff`). */
+  wallChance?: number;
+  /** Chance of an outright careless move — the flaw that keeps a tier beatable. */
+  blunderChance?: number;
 }
 
 export const BOTS: BotProfile[] = [
   {
-    id: 'beginner',
-    name: 'Pawnsy',
-    elo: 600,
-    tagline: 'Learning the ropes',
+    id: 'pip',
+    tier: 1,
+    name: 'Pip',
+    elo: 400,
+    tagline: 'Absolute beginner',
     quote: 'I only trap myself, like, a third of the time.',
-    style: ['Greedy BFS', 'Random walls', 'Occasional side-step'],
+    style: ['Random moves', 'No plan', 'Very earnest'],
     gradient: 'from-emerald-500/80 to-lime-600/60',
     accent: '#81b64c',
     emoji: '🌱',
     description:
-      'Walks straight at the finish line and drops walls wherever it feels right. A gentle first opponent.',
-    thinkMs: [320, 720],
+      'Just learned the rules. Picks legal moves more or less at random and apologises for winning.',
+    thinkMs: [240, 560],
+    strategy: 'random',
   },
   {
-    id: 'intermediate',
+    id: 'nibbles',
+    tier: 2,
+    name: 'Nibbles',
+    elo: 700,
+    tagline: 'Greedy but distracted',
+    quote: 'I walk forward! Then I get hungry and forget why.',
+    style: ['Greedy BFS', 'Random walls', 'Side-steps'],
+    gradient: 'from-amber-500/80 to-orange-600/60',
+    accent: '#f7c631',
+    emoji: '🐿️',
+    description:
+      'Always takes a step that shortens its own path — but wastes the occasional wall and wanders off course.',
+    thinkMs: [280, 640],
+    strategy: 'greedy',
+  },
+  {
+    id: 'watcher',
+    tier: 3,
+    name: 'The Watcher',
+    elo: 1000,
+    tagline: 'Patient observer',
+    quote: 'The shortest path is rarely the obvious one.',
+    style: ['Path differential', 'Defensive walls', 'Calm'],
+    gradient: 'from-teal-500/80 to-cyan-600/60',
+    accent: '#2dd4bf',
+    emoji: '🦉',
+    description:
+      'Counts both routes and places a wall whenever it gains even a single step. Cautious, but easily out-tempoed.',
+    thinkMs: [320, 700],
+    strategy: 'pathdiff',
+    minGain: 1,
+    wallChance: 0.55,
+    blunderChance: 0.2,
+  },
+  {
+    id: 'rookford',
+    tier: 4,
     name: 'Rookford',
-    elo: 1200,
+    elo: 1300,
     tagline: 'Path-differential tactician',
     quote: 'Two extra steps for you is two free steps for me.',
     style: ['Path differential', 'Wall hunting', 'Safe by construction'],
@@ -73,12 +140,35 @@ export const BOTS: BotProfile[] = [
     emoji: '♞',
     description:
       'Measures the shortest path for both sides. Only spends a wall when it costs you at least two steps — and never traps itself.',
-    thinkMs: [400, 900],
+    thinkMs: [380, 820],
+    strategy: 'pathdiff',
+    minGain: 2,
+    wallChance: 0.85,
+    blunderChance: 0.04,
   },
   {
-    id: 'advanced',
+    id: 'sable',
+    tier: 5,
+    name: 'Sable',
+    elo: 1600,
+    tagline: 'Alpha-beta hunter',
+    quote: 'I will see your walls before you place them.',
+    style: ['Minimax depth 2', 'Alpha-beta pruning', 'Relentless'],
+    gradient: 'from-slate-500/80 to-zinc-700/60',
+    accent: '#a1a1aa',
+    emoji: '🐺',
+    description:
+      'First real calculator: two plies of search with alpha-beta pruning, so it sees your reply before committing.',
+    thinkMs: [420, 900],
+    strategy: 'search',
+    depth: 2,
+    searchNoise: 12,
+  },
+  {
+    id: 'vex',
+    tier: 6,
     name: 'Grandmaster Vex',
-    elo: 1800,
+    elo: 1900,
     tagline: 'Brutal endgame calculator',
     quote: 'I searched three plies. You searched your feelings.',
     style: ['Minimax depth 3', 'Alpha-beta pruning', 'Central control'],
@@ -87,11 +177,35 @@ export const BOTS: BotProfile[] = [
     emoji: '♛',
     description:
       'Negamax with alpha-beta pruning, wall-inventory awareness and a fondness for the centre. Punishes loose walls.',
-    thinkMs: [450, 1100],
+    thinkMs: [480, 1000],
+    strategy: 'search',
+    depth: 3,
+    searchNoise: 5,
+  },
+  {
+    id: 'oracle',
+    tier: 7,
+    name: 'The Oracle',
+    elo: 2200,
+    tagline: 'Sees four plies ahead',
+    quote: 'The board has already told me how this ends.',
+    style: ['Minimax depth 4', 'Alpha-beta pruning', 'Prophylaxis'],
+    gradient: 'from-violet-500/80 to-fuchsia-600/60',
+    accent: '#a855f7',
+    emoji: '🔮',
+    description:
+      'Four plies deep with iterative deepening and a wide root. Misses almost nothing and never leaves a route open for free.',
+    thinkMs: [520, 1100],
+    strategy: 'search',
+    depth: 4,
+    searchNoise: 0,
   },
 ];
 
 export const getBot = (id: BotId): BotProfile => BOTS.find((b) => b.id === id) ?? BOTS[0];
+
+/** Bots ordered easiest → hardest. */
+export const BOT_TIERS = [...BOTS].sort((a, b) => a.tier - b.tier);
 
 /* ------------------------------------------------------------------ */
 /* Static evaluation                                                   */
@@ -101,9 +215,13 @@ export const WIN_SCORE = 100_000;
 
 /** Search depths used by the bot tiers and the review engine. */
 export const BOT_SEARCH_DEPTH = {
-  beginner: 0,
-  intermediate: 1,
-  advanced: 3,
+  pip: 0,
+  nibbles: 0,
+  watcher: 0,
+  rookford: 1,
+  sable: 2,
+  vex: 3,
+  oracle: 4,
   review: 1,
 } as const;
 
@@ -235,7 +353,10 @@ export function generateCandidates(
     for (let c = 0; c < SLOTS; c++) {
       for (const o of ['h', 'v'] as const) {
         const wall: Wall = { r, c, o };
-        if (!isWallLegal(state, wall, player)) continue;
+        // Only the cheap structural checks here. The anti-trap BFS costs two
+        // full searches per wall, so it is deferred until we know which walls
+        // we actually intend to return (below).
+        if (!isWallStructurallyLegal(state, wall, player)) continue;
 
         let key = 0;
         const edges = wallEdges(wall);
@@ -258,7 +379,15 @@ export function generateCandidates(
 
   scored.sort((a, b) => b.key - a.key);
 
-  return [...pawnCandidates, ...scored.slice(0, wallLimit).map((x) => ({ type: 'wall', wall: x.wall }) as Move)];
+  // Verify the anti-trap rule only for the walls we are about to offer.
+  const walls: Move[] = [];
+  for (const entry of scored) {
+    if (walls.length >= wallLimit) break;
+    if (!isWallLegal(state, entry.wall, player)) continue;
+    walls.push({ type: 'wall', wall: entry.wall });
+  }
+
+  return [...pawnCandidates, ...walls];
 }
 
 /* ------------------------------------------------------------------ */
@@ -270,6 +399,8 @@ export interface SearchOptions {
   timeBudgetMs?: number;
   nodeBudget?: number;
   wallLimit?: number;
+  /** Candidates the leaf quiescence verifies (wider = more accurate, slower). */
+  quiesceWidth?: number;
   /** Random tie-breaking noise applied to root scores (0 = deterministic). */
   noise?: number;
   random?: () => number;
@@ -291,6 +422,99 @@ interface Budget {
   aborted: boolean;
 }
 
+/* ------------------------------------------------------------------ */
+/* Transposition table                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Zobrist keys make depth-4 search affordable: wall placements transpose
+ * constantly (A then B = B then A is legal for unrelated walls), so memoising
+ * positions cuts the tree dramatically.
+ */
+const ZOBRIST = (() => {
+  let seed = 0x9e3779b9;
+  const next = () => {
+    // xorshift32 — deterministic and fast.
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return seed >>> 0;
+  };
+  return {
+    h: Array.from({ length: 64 }, next),
+    v: Array.from({ length: 64 }, next),
+    pawn: Array.from({ length: 81 }, next),
+    turn: next(),
+    left: Array.from({ length: 24 }, next),
+  };
+})();
+
+export function hashState(state: GameState): number {
+  let key = 0;
+  for (let r = 0; r < SLOTS; r++) {
+    for (let c = 0; c < SLOTS; c++) {
+      const i = r * SIZE + c;
+      if (state.h[i]) key ^= ZOBRIST.h[r * 8 + c];
+      if (state.v[i]) key ^= ZOBRIST.v[r * 8 + c];
+    }
+  }
+  key ^= ZOBRIST.pawn[state.pawns[0].r * SIZE + state.pawns[0].c];
+  key ^= ZOBRIST.pawn[state.pawns[1].r * SIZE + state.pawns[1].c];
+  key ^= ZOBRIST.left[state.left[0]];
+  key ^= ZOBRIST.left[12 + state.left[1]];
+  if (state.turn === 1) key ^= ZOBRIST.turn;
+  return key | 0;
+}
+
+const TT_EXACT = 0;
+const TT_LOWER = 1;
+const TT_UPPER = 2;
+
+interface TTEntry {
+  depth: number;
+  score: number;
+  flag: number;
+}
+
+/**
+ * Branching width by remaining depth: broad at the root, narrow deep in the
+ * tree. This is what keeps depth 4 inside its budget.
+ */
+function widthForDepth(depth: number, wallLimit: number): number {
+  if (depth >= 3) return 8;
+  if (depth === 2) return 12;
+  return wallLimit;
+}
+
+/**
+ * Quiescence: always let the side to move at a leaf take one reply before we
+ * evaluate. Without this, odd search depths are systematically optimistic — the
+ * leaf would score a position after *our* move while assuming the opponent
+ * passes, and a depth-3 bot would then lose to a depth-2 one.
+ */
+function quiesce(state: GameState, budget: Budget, width: number): number {
+  if (state.winner !== null) return evaluate(state, state.turn);
+
+  budget.nodes++;
+  if (budget.nodes > budget.nodeBudget) {
+    budget.aborted = true;
+    return evaluate(state, state.turn);
+  }
+
+  const candidates = generateCandidates(state, state.turn, { wallLimit: width });
+  if (candidates.length === 0) return evaluate(state, state.turn);
+
+  let best = -Infinity;
+  for (const move of candidates) {
+    const child = applyMove(state, move);
+    const value =
+      child.winner === state.turn ? WIN_SCORE - child.ply : -evaluate(child, child.turn);
+    if (value > best) best = value;
+  }
+
+  return best === -Infinity ? evaluate(state, state.turn) : best;
+}
+
 /** Negamax with alpha-beta pruning. Values are always from `state.turn`'s view. */
 function negamax(
   state: GameState,
@@ -299,6 +523,8 @@ function negamax(
   beta: number,
   budget: Budget,
   wallLimit: number,
+  tt: Map<number, TTEntry>,
+  quiesceWidth: number,
 ): number {
   budget.nodes++;
   if (budget.nodes > budget.nodeBudget) {
@@ -311,24 +537,42 @@ function negamax(
   }
 
   if (state.winner !== null) return evaluate(state, state.turn);
-  if (depth <= 0) return evaluate(state, state.turn);
+  if (depth <= 0) return quiesce(state, budget, quiesceWidth);
 
-  // Branching narrows quickly with depth: breadth at the root, focus deeper in.
-  const width = depth >= 2 ? Math.max(4, wallLimit >> 1) : wallLimit;
-  const candidates = generateCandidates(state, state.turn, { wallLimit: width });
+  const alphaOrig = alpha;
+  const betaOrig = beta;
+  const key = hashState(state);
+  const cached = tt.get(key);
+  if (cached && cached.depth >= depth) {
+    if (cached.flag === TT_EXACT) return cached.score;
+    if (cached.flag === TT_LOWER) alpha = Math.max(alpha, cached.score);
+    else if (cached.flag === TT_UPPER) beta = Math.min(beta, cached.score);
+    if (alpha >= beta) return cached.score;
+  }
+
+  const candidates = generateCandidates(state, state.turn, {
+    wallLimit: widthForDepth(depth, wallLimit),
+  });
   if (candidates.length === 0) return evaluate(state, state.turn);
 
   let value = -Infinity;
   for (const move of candidates) {
     const child = applyMove(state, move);
-    const score = -negamax(child, depth - 1, -beta, -alpha, budget, wallLimit);
+    const score = -negamax(child, depth - 1, -beta, -alpha, budget, wallLimit, tt, quiesceWidth);
     if (score > value) value = score;
     if (value > alpha) alpha = value;
     if (alpha >= beta) break; // beta cut-off
     if (budget.aborted) break;
   }
 
-  return value === -Infinity ? evaluate(state, state.turn) : value;
+  if (value === -Infinity) return evaluate(state, state.turn);
+
+  if (!budget.aborted) {
+    const flag = value <= alphaOrig ? TT_UPPER : value >= betaOrig ? TT_LOWER : TT_EXACT;
+    tt.set(key, { depth, score: value, flag });
+  }
+
+  return value;
 }
 
 /**
@@ -342,6 +586,7 @@ export function searchBestMove(state: GameState, opts: SearchOptions = {}): Sear
     timeBudgetMs = 900,
     nodeBudget = 12_000,
     wallLimit = 20,
+    quiesceWidth = 8,
     noise = 0,
     random = Math.random,
   } = opts;
@@ -358,6 +603,9 @@ export function searchBestMove(state: GameState, opts: SearchOptions = {}): Sear
     deadline: started + timeBudgetMs,
     aborted: false,
   };
+
+  // Scoped to this search so a stale memo can never leak across positions.
+  const tt = new Map<number, TTEntry>();
 
   let bestScores: Array<{ move: Move; score: number }> = rootCandidates.map((move) => ({
     move,
@@ -387,7 +635,7 @@ export function searchBestMove(state: GameState, opts: SearchOptions = {}): Sear
       if (child.winner === me) {
         score = WIN_SCORE - child.ply;
       } else {
-        score = -negamax(child, d - 1, -Infinity, -alpha, budget, wallLimit);
+        score = -negamax(child, d - 1, -Infinity, -alpha, budget, wallLimit, tt, quiesceWidth);
         if (noise > 0) score += (random() - 0.5) * 2 * noise;
       }
 
@@ -439,7 +687,7 @@ export function evaluateMove(state: GameState, move: Move, depth = 1): number {
     deadline: Date.now() + 250,
     aborted: false,
   };
-  return -negamax(child, depth, -Infinity, Infinity, budget, 14);
+  return -negamax(child, depth, -Infinity, Infinity, budget, 14, new Map(), 8);
 }
 
 export function sameMove(a: Move, b: Move): boolean {
@@ -487,8 +735,26 @@ function randomWall(state: GameState, player: Player, random: () => number): Mov
   return { type: 'wall', wall: pick(walls, random) };
 }
 
-/** Beginner: greedy BFS, random walls, occasional side-step. */
-export function beginnerMove(state: GameState, random: () => number = Math.random): Move {
+/** Any legal move at all, chosen uniformly. Tier 1 barely plans. */
+export function randomMove(state: GameState, random: () => number = Math.random): Move {
+  const me = state.turn;
+  const pawns = legalPawnMoves(state, me);
+  const canWall = state.left[me] > 0;
+  const wallFirst = canWall && random() < 0.3;
+
+  if (wallFirst) {
+    const wall = randomWall(state, me, random);
+    if (wall) return wall;
+  }
+  if (pawns.length > 0) return { type: 'pawn', to: pick(pawns, random) };
+
+  const wall = randomWall(state, me, random);
+  if (wall) return wall;
+  return { type: 'pawn', to: state.pawns[me] };
+}
+
+/** Tier 2: greedy BFS walker with random walls and the odd side-step. */
+export function greedyMove(state: GameState, random: () => number = Math.random): Move {
   if (state.left[state.turn] > 0 && random() < 0.22) {
     const wall = randomWall(state, state.turn, random);
     if (wall) return wall;
@@ -496,15 +762,42 @@ export function beginnerMove(state: GameState, random: () => number = Math.rando
   return greedyPawn(state, state.turn, random, 0.14);
 }
 
-/** Intermediate: spend a wall only when it gains >= 2 steps and stays safe. */
-export function intermediateMove(state: GameState, random: () => number = Math.random): Move {
+export interface PathDiffOptions {
+  /** Only spend a wall when the opponent gains at least this many steps. */
+  minGain: number;
+  /** Chance of committing to the wall once one is found. */
+  wallChance: number;
+  /** Keep this many walls in reserve for the endgame. */
+  reserve?: number;
+  /** Chance of a careless move instead of the calculated one. */
+  blunderChance?: number;
+}
+
+/**
+ * Tiers 3-4: shortest-path differential.
+ * A wall is only worth it when it lengthens the opponent's route by `minGain`
+ * while costing us at most one step of our own.
+ */
+export function pathDiffMove(
+  state: GameState,
+  random: () => number = Math.random,
+  opts: PathDiffOptions = { minGain: 2, wallChance: 0.85 },
+): Move {
   const me = state.turn;
+
+  // Even a decent club player drifts sometimes; this is what makes the tier
+  // ladder feel human rather than a wall of perfect calculators.
+  if (opts.blunderChance && random() < opts.blunderChance) {
+    return randomMove(state, random);
+  }
+
   const opp = other(me);
   const myDist = pathLength(state, me);
   const oppDist = pathLength(state, opp);
+  const reserve = opts.reserve ?? 2;
 
   const candidates = generateCandidates(state, me, { wallLimit: 28 });
-  let bestWall: { wall: Wall; gain: number; ownCost: number } | null = null;
+  let bestWall: { wall: Wall; score: number } | null = null;
 
   for (const move of candidates) {
     if (move.type !== 'wall') continue;
@@ -513,43 +806,67 @@ export function intermediateMove(state: GameState, random: () => number = Math.r
     const child = applyMove(state, move);
     const oppAfter = pathLength(child, opp);
     const myAfter = pathLength(child, me);
-    if (myAfter === Infinity || oppAfter === Infinity) continue; // anti-trap
+    if (myAfter === Infinity || oppAfter === Infinity) continue; // anti-trap defence
 
     const gain = oppAfter - oppDist;
     const ownCost = myAfter - myDist;
+    if (gain < opts.minGain || ownCost > 1) continue;
 
-    if (gain >= 2 && ownCost <= 1) {
-      const score = gain - ownCost * 2;
-      if (!bestWall || score > bestWall.gain - bestWall.ownCost * 2) {
-        bestWall = { wall: move.wall, gain, ownCost };
-      }
-    }
+    const score = gain - ownCost * 2;
+    if (!bestWall || score > bestWall.score) bestWall = { wall: move.wall, score };
   }
 
-  // Keep some walls in reserve; don't burn them for nothing.
-  const shouldWall =
-    bestWall !== null &&
-    (state.left[me] > 2 || oppDist - myDist < 2) &&
-    random() < 0.85;
+  const canSpare = state.left[me] > reserve || oppDist - myDist < opts.minGain;
+  const shouldWall = bestWall !== null && canSpare && random() < opts.wallChance;
 
   if (shouldWall && bestWall) return { type: 'wall', wall: bestWall.wall };
 
   return greedyPawn(state, me, random, 0.05);
 }
 
-/** Advanced: negamax + alpha-beta, depth 2-3 with iterative deepening. */
-export function advancedMove(
+/** Per-tier search budgets. Deeper tiers get more time and a wider root. */
+const SEARCH_BUDGET: Record<
+  number,
+  { timeMs: number; nodes: number; wallLimit: number; quiesceWidth: number }
+> = {
+  2: { timeMs: 500, nodes: 8_000, wallLimit: 12, quiesceWidth: 4 },
+  3: { timeMs: 1_000, nodes: 30_000, wallLimit: 18, quiesceWidth: 8 },
+  4: { timeMs: 1_700, nodes: 90_000, wallLimit: 24, quiesceWidth: 12 },
+};
+
+export interface SearchMoveOptions {
+  depth: number;
+  timeMs?: number;
+  nodes?: number;
+  wallLimit?: number;
+  quiesceWidth?: number;
+  noise?: number;
+  random?: () => number;
+}
+
+/**
+ * Tiers 5-7: negamax with alpha-beta pruning and iterative deepening.
+ * Depth scales 2 → 3 → 4 across the top three tiers.
+ */
+export function searchMove(
   state: GameState,
-  random: () => number = Math.random,
+  opts: SearchMoveOptions,
 ): { move: Move; result: SearchResult } {
+  const random = opts.random ?? Math.random;
+  const budget = SEARCH_BUDGET[opts.depth] ?? SEARCH_BUDGET[2];
   const wallsEarly = state.ply < 12;
 
+  // Opening depth is kept at the tier's depth; late-game positions branch far
+  // less, so the same depth is cheap and the budget simply absorbs it.
+  const depth = opts.depth;
+
   const result = searchBestMove(state, {
-    depth: wallsEarly ? 3 : 2,
-    timeBudgetMs: 1_200,
-    nodeBudget: 9_000,
-    wallLimit: 18,
-    noise: 6,
+    depth,
+    timeBudgetMs: opts.timeMs ?? budget.timeMs,
+    nodeBudget: opts.nodes ?? budget.nodes,
+    wallLimit: opts.wallLimit ?? budget.wallLimit,
+    quiesceWidth: opts.quiesceWidth ?? budget.quiesceWidth,
+    noise: opts.noise ?? (wallsEarly ? 4 : 2),
     random,
   });
 
@@ -562,7 +879,7 @@ export interface BotTurnResult {
   search?: SearchResult;
 }
 
-/** Public entry point used by the UI. */
+/** Play a move for `botId`. Always legal; falls back to a greedy step. */
 export function botMove(
   state: GameState,
   botId: BotId,
@@ -570,15 +887,33 @@ export function botMove(
 ): BotTurnResult {
   if (state.winner !== null) return { move: { type: 'pawn', to: state.pawns[state.turn] } };
 
-  switch (botId) {
-    case 'beginner':
-      return { move: beginnerMove(state, random) };
-    case 'intermediate':
-      return { move: intermediateMove(state, random) };
-    case 'advanced':
-      return advancedMove(state, random);
+  const profile = getBot(botId);
+
+  switch (profile.strategy) {
+    case 'random':
+      return { move: randomMove(state, random) };
+
+    case 'greedy':
+      return { move: greedyMove(state, random) };
+
+    case 'pathdiff':
+      return {
+        move: pathDiffMove(state, random, {
+          minGain: profile.minGain ?? 2,
+          wallChance: profile.wallChance ?? 0.85,
+          blunderChance: profile.blunderChance,
+        }),
+      };
+
+    case 'search':
+      return searchMove(state, {
+        depth: profile.depth ?? 2,
+        noise: profile.searchNoise ?? 0,
+        random,
+      });
+
     default:
-      return { move: beginnerMove(state, random) };
+      return { move: greedyMove(state, random) };
   }
 }
 

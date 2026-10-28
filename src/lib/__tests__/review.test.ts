@@ -26,7 +26,7 @@ function makeGame(seed: number, length = 30) {
   let s = createInitialState();
   const moves: Move[] = [];
   while (s.winner === null && moves.length < length) {
-    const { move } = botMove(s, moves.length % 3 === 0 ? 'beginner' : 'intermediate', rng);
+    const { move } = botMove(s, moves.length % 3 === 0 ? 'nibbles' : 'rookford', rng);
     moves.push(move);
     s = applyMove(s, move);
   }
